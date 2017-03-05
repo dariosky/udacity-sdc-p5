@@ -67,6 +67,7 @@ def train(dataset_name='dataset',
     # Check the score of the SVC
     print('Test Accuracy of SVC = ', round(svc.score(X_test, y_test), 4))
     if dump_filename:
+        print("Saving trained classifier and settings to: %s" % dump_filename)
         dump = dict(
             svc=svc,
             X_scaler=X_scaler,

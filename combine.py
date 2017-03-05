@@ -100,15 +100,9 @@ def find_car_boxes(img, ystart, ystop, scale,
     else:
         hog_channels = [hog_channel]
 
-    # for chan_number in hog_channels:
-    #     ch = ctrans_tosearch[:, :, chan_number]
-    ch1 = ctrans_tosearch[:, :, 0]
-    ch2 = ctrans_tosearch[:, :, 1]
-    ch3 = ctrans_tosearch[:, :, 2]
-
     # Define blocks and steps as above
-    nxblocks = (ch1.shape[1] // pix_per_cell) - 1
-    nyblocks = (ch1.shape[0] // pix_per_cell) - 1
+    nxblocks = (ctrans_tosearch.shape[1] // pix_per_cell) - 1
+    nyblocks = (ctrans_tosearch.shape[0] // pix_per_cell) - 1
     nfeat_per_block = orient * cell_per_block ** 2
     # 64 was the orginal sampling rate, with 8 cells and 8 pix per cell
     window = 64
@@ -117,20 +111,25 @@ def find_car_boxes(img, ystart, ystop, scale,
     nxsteps = (nxblocks - nblocks_per_window) // cells_per_step
     nysteps = (nyblocks - nblocks_per_window) // cells_per_step
 
-    # Compute individual channel HOG features for the entire image
-    hog1 = get_hog_features(ch1, orient, pix_per_cell, cell_per_block, feature_vec=False)
-    hog2 = get_hog_features(ch2, orient, pix_per_cell, cell_per_block, feature_vec=False)
-    hog3 = get_hog_features(ch3, orient, pix_per_cell, cell_per_block, feature_vec=False)
+    hogs = []  # a list that will keep the hog features, one per channel
+    for chan_number in hog_channels:
+        ch = ctrans_tosearch[:, :, chan_number]
+
+        # Compute individual channel HOG features for the entire image
+        hog = get_hog_features(ch, orient, pix_per_cell, cell_per_block, feature_vec=False)
+        hogs.append(hog)
 
     for xb in range(nxsteps):
         for yb in range(nysteps):
             ypos = yb * cells_per_step
             xpos = xb * cells_per_step
             # Extract HOG for this patch
-            hog_feat1 = hog1[ypos:ypos + nblocks_per_window, xpos:xpos + nblocks_per_window].ravel()
-            hog_feat2 = hog2[ypos:ypos + nblocks_per_window, xpos:xpos + nblocks_per_window].ravel()
-            hog_feat3 = hog3[ypos:ypos + nblocks_per_window, xpos:xpos + nblocks_per_window].ravel()
-            hog_features = np.hstack((hog_feat1, hog_feat2, hog_feat3))
+            hog_feats = []
+            for hog in hogs:
+                hog_feats.append(
+                    hog[ypos:ypos + nblocks_per_window, xpos:xpos + nblocks_per_window].ravel()
+                )
+            hog_features = np.hstack(hog_feats)
 
             xleft = xpos * pix_per_cell
             ytop = ypos * pix_per_cell
