@@ -1,0 +1,9 @@
+.ipynb_checkpoints/
+*.py[oc]
+
+# don't include notes
+/_*
+
+# and the dataset
+/dataset
+/dataset_small
