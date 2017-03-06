@@ -58,6 +58,7 @@ class ProcessPipeline:
 
         self.YM_PER_PIX = 30 / 720  # meters per pixel in y dimension
         self.XM_PER_PIX = 3.7 / 700  # meters per pixel in x dimension
+        self.font = cv2.FONT_HERSHEY_SIMPLEX
         self.message = ""
         self.message_subscribe()
 
@@ -66,6 +67,7 @@ class ProcessPipeline:
 
         self.radius = 0
 
+        # Vehicle detection: classificator and memory
         self.classificator = load_or_train()
         self.detection_params = dict(
             ystart=400,
@@ -73,14 +75,20 @@ class ProcessPipeline:
             scale=1.5,
             **self.classificator
         )
+        self.rolling_heat = None
 
     def message_subscribe(self):
         """ Subscribe to lane_message events, they can arrive from the pipeline """
         signal('lane_message').connect(self.on_lane_message)
+        signal('track_message').connect(self.on_track_message)
 
     def on_lane_message(self, sender, message=""):
         # print("Message:", message)
         self.message = message
+
+    def on_track_message(self, message=""):
+        # print("Tracking:", message)
+        self.tracking_message = message
 
     def camera_calibration(self, img_size):
         images = glob.glob('camera_cal/calibration*.jpg')  # Make a list of calibration images
@@ -147,6 +155,7 @@ class ProcessPipeline:
                 ):
         img = self.load(img)
         self.message = ""  # clean message
+        self.tracking_message = "temp"
 
         if plot_steps:
             f, self.plot_axes = plt.subplots(len(plot_steps))
@@ -220,10 +229,10 @@ class ProcessPipeline:
                 radius_in_meters(y, leftx, rightx)
             )
 
-        gray = cv2.cvtColor(self.warped, cv2.COLOR_RGB2GRAY)
+        self.gray = cv2.cvtColor(self.warped, cv2.COLOR_RGB2GRAY)
 
         if self.save_steps or Steps.detect_lines in plot_steps:
-            warped_lines = line_on_the_road(gray,
+            warped_lines = line_on_the_road(self.gray,
                                             self.undist,
                                             self.Minv,
                                             y, leftx, rightx,
@@ -234,21 +243,20 @@ class ProcessPipeline:
             if Steps.detect_lines in plot_steps:
                 self.plot(warped_lines)
 
-        out = line_on_the_road(gray,
+        out = line_on_the_road(self.gray,
                                self.undist,
                                self.Minv,
                                y, leftx, rightx,
                                )
-        font = cv2.FONT_HERSHEY_SIMPLEX
 
         if self.radius:
             cv2.putText(out, "radius {:.0f}m".format(self.radius), (50, 50),
-                        font, 1, (255, 100, 100), 2, cv2.LINE_AA)
+                        self.font, 1, (255, 100, 100), 2, cv2.LINE_AA)
         if self.distance_from_center:
             cv2.putText(out, "shift {:.2f}m".format(self.distance_from_center), (50, 85),
-                        font, 1, (255, 100, 100), 2, cv2.LINE_AA)
+                        self.font, 1, (255, 100, 100), 2, cv2.LINE_AA)
         cv2.putText(out, self.message, (self.img_size[1] // 2, 65),
-                    font, 1.2, (255, 100, 100), 2, cv2.LINE_AA)
+                    self.font, 1.2, (255, 100, 100), 2, cv2.LINE_AA)
 
         if self.save_steps:
             self.save(out, 'detection')
@@ -256,22 +264,50 @@ class ProcessPipeline:
             self.plot(out)
 
         # P5. Vehicles detection and tracking
-        bboxes = find_car_boxes(self.undist,
-                                **self.detection_params)
-        heatmap = get_heatmap(self.undist, bboxes, threshold=1)
-        labeled_array, num_features = label(heatmap)
-        cv2.putText(out, "cars found: %d" % num_features,
+        out = self.detect_and_heat(self.undist, out)
+        cv2.putText(out, self.tracking_message,
                     (50, 120),
-                    font, 1.2, (255, 100, 100), 2, cv2.LINE_AA)
-        out = draw_labeled_bboxes(out, labeled_array, num_features)
-
-        if self.save_steps:
-            self.save(out, 'vehicle_tracking')
+                    self.font, 1.2, (255, 100, 100), 2, cv2.LINE_AA)
         if Steps.lanes_and_other_cars in plot_steps:
             self.plot(out)
 
         if plot_steps:
             plt.show()
+        return out
+
+    def detect_and_heat(self, src, out):
+        if self.rolling_heat is None:
+            self.rolling_heat = np.ones_like(self.gray, dtype=np.float)
+
+        self.rolling_heat = np.clip(self.rolling_heat, 1, 255)
+        self.rolling_heat -= 1  # cool down the previous heat
+
+        bboxes = find_car_boxes(src, **self.detection_params)
+
+        heatmap = get_heatmap(self.undist, bboxes, threshold=0)
+        self.rolling_heat += heatmap  # add the current heatmap
+
+        thresholded_rolling_heat = self.rolling_heat.copy()
+        ROLLING_HEAT_THRESHOLD = 4
+        thresholded_rolling_heat[thresholded_rolling_heat < ROLLING_HEAT_THRESHOLD] = 0
+
+        # threshold over the global heat
+        labeled_array, num_features = label(thresholded_rolling_heat)
+        out_heat = np.dstack(
+            (self.rolling_heat * 200, self.rolling_heat, self.rolling_heat)
+        ).astype(np.uint8)
+        out = cv2.addWeighted(out, 1, out_heat, .2, 0)
+        out = draw_labeled_bboxes(out, labeled_array, num_features)
+        signal('track_message').send(
+            'cars: {tot_cars} - heat {minheat}-{maxheat}'.format(
+                tot_cars=num_features,
+                minheat=self.rolling_heat.min(),
+                maxheat=self.rolling_heat.max()
+            )
+        )
+
+        if self.save_steps:
+            self.save(out, 'vehicle_tracking')
         return out
 
 
@@ -290,11 +326,11 @@ def run_single(filename, show_steps=True, save_steps=False):
         plot_steps=(
             # Steps.original,
             # Steps.undistort,
-            Steps.warp,
-            Steps.binary,
-            Steps.detect_lines,
+            # Steps.warp,
+            # Steps.binary,
+            # Steps.detect_lines,
             # Steps.lines_on_road,
-            # Steps.lanes_and_other_cars,
+            Steps.lanes_and_other_cars,
         ) if show_steps else ()
     )
 
@@ -314,7 +350,7 @@ def run_video(filename='video/project_video.mp4'):
 
 
 def run_sequence():
-    image_sequence = sorted(glob.glob("test_images/sequence/*.jpg"))
+    image_sequence = sorted(glob.glob("img/sequence/*.jpg"))
     pipeline = ProcessPipeline()
     pipeline.output_prefix = "sequence"
     for filename in image_sequence[:3]:
@@ -330,7 +366,7 @@ def extract_sequence(filename='video/project_video.mp4'):
     clip = VideoFileClip(filename).subclip(t_end=5)  # get the start of video
 
     for t in range(10):
-        filename = "test_images/sequence/frame_%0d.jpg" % t
+        filename = "img/sequence/frame_%0d.jpg" % t
         print("Extracting frame", filename)
         clip.save_frame(filename, t=t / 2)  # save every half second
 
@@ -341,12 +377,13 @@ if __name__ == '__main__':
     # extract_sequence()
 
     # examples on single frames (it will do a "blind scan")
-    run_single('img/test5.jpg')
+    # run_single('img/test6.jpg')
+    # run_single('img/test5.jpg')
     # ... and an hard one
-    # run_single('test_images/sequence/frame_0.jpg')
+    # run_single('img/sequence/frame_0.jpg')
 
     # examples on project video
-    # run_video('video/test_video.mp4')
+    run_video('video/test_video.mp4')
     # run_video('video/project_video.mp4')
     # run_video('video/challenge_video.mp4')
 

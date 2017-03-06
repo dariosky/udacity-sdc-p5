@@ -62,7 +62,7 @@ def extract_features(imgs, color_space='RGB',
                     (
                         spatial_features,
                         hist_features,
-                        hog_features
+                        hog_features,
                     )
                 )
             )

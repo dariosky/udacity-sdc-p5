@@ -13,7 +13,7 @@ from vehicle_detection.hog_features import get_car_dataset
 
 def train(dataset_name='dataset',
           color_space='YCrCb',  # Can be RGB, HSV, LUV, HLS, YUV, YCrCb
-          orient=9,  # HOG orientations
+          orient=12,  # HOG orientations
           pix_per_cell=8,  # HOG pixels per cell
           cell_per_block=2,  # HOG cells per block
           hog_channel=0,  # Can be 0, 1, 2, or "ALL"
@@ -97,4 +97,6 @@ def load_or_train(trained_dump_filename='train_dump.jot'):
 
 
 if __name__ == '__main__':
-    train(dump_filename='train_dump.jot')
+    train(
+        dump_filename='train_dump.jot'
+    )
