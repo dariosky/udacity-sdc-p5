@@ -13,12 +13,15 @@ from vehicle_detection.hog_features import get_car_dataset
 
 def train(dataset_name='dataset',
           color_space='YCrCb',  # Can be RGB, HSV, LUV, HLS, YUV, YCrCb
-          orient=12,  # HOG orientations
+          orient=9,  # HOG orientations
           pix_per_cell=8,  # HOG pixels per cell
           cell_per_block=2,  # HOG cells per block
-          hog_channel=0,  # Can be 0, 1, 2, or "ALL"
+          hog_channel='ALL',  # Can be 0, 1, 2, or "ALL"
           spatial_size=(32, 32),  # Spatial binning dimensions
           hist_bins=32,  # Number of histogram bins
+          hog=True,
+          spatial=True,
+          hist=True,
           dump_filename=None,
           ):
     # Read in cars and notcars
@@ -34,13 +37,17 @@ def train(dataset_name='dataset',
                                     spatial_size=spatial_size, hist_bins=hist_bins,
                                     orient=orient, pix_per_cell=pix_per_cell,
                                     cell_per_block=cell_per_block,
-                                    hog_channel=hog_channel)
+                                    hog_channel=hog_channel,
+                                    hog=hog, spatial=spatial, hist=hist,
+                                    )
     notcar_features = extract_features(notcars,
                                        color_space=color_space,
                                        spatial_size=spatial_size, hist_bins=hist_bins,
                                        orient=orient, pix_per_cell=pix_per_cell,
                                        cell_per_block=cell_per_block,
-                                       hog_channel=hog_channel)
+                                       hog_channel=hog_channel,
+                                       hog=hog, spatial=spatial, hist=hist,
+                                       )
     X = np.vstack((car_features, notcar_features)).astype(np.float64)
     # Fit a per-column scaler
     X_scaler = StandardScaler().fit(X)
@@ -70,13 +77,21 @@ def train(dataset_name='dataset',
     dump = dict(
         svc=svc,
         X_scaler=X_scaler,
+
+        color_space=color_space,
+
+        hog_channel=hog_channel,
         orient=orient,
         pix_per_cell=pix_per_cell,
         cell_per_block=cell_per_block,
+
         spatial_size=spatial_size,
         hist_bins=hist_bins,
-        color_space=color_space,
-        hog_channel=hog_channel,
+
+        # flags to enable the 3 features extraction types
+        hog=hog,
+        spatial=spatial,
+        hist=hist,
     )
     if dump_filename:
         print("Saving trained classifier and settings to: %s" % dump_filename)
@@ -97,6 +112,7 @@ def load_or_train(trained_dump_filename='train_dump.jot'):
 
 
 if __name__ == '__main__':
-    train(
-        dump_filename='train_dump.jot'
-    )
+    # train(
+    #     dump_filename='train_dump.jot'
+    # )
+    print(load())

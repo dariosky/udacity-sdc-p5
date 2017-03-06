@@ -59,7 +59,7 @@ class ProcessPipeline:
         self.YM_PER_PIX = 30 / 720  # meters per pixel in y dimension
         self.XM_PER_PIX = 3.7 / 700  # meters per pixel in x dimension
         self.font = cv2.FONT_HERSHEY_SIMPLEX
-        self.message = ""
+        self.message = self.tracking_message = ""
         self.message_subscribe()
 
         self.previous_centers = None
@@ -71,11 +71,12 @@ class ProcessPipeline:
         self.classificator = load_or_train()
         self.detection_params = dict(
             ystart=400,
-            ystop=656,
+            ystop=680,
             scale=1.5,
             **self.classificator
         )
         self.rolling_heat = None
+        self.mask_of_interest = None
 
     def message_subscribe(self):
         """ Subscribe to lane_message events, they can arrive from the pipeline """
@@ -125,6 +126,7 @@ class ProcessPipeline:
             img = img[:, :, :3]  # discard alpha channel
         self.img = img  # keep the original image with the process
         self.img_size = self.img.shape[:2]
+        self.mask_of_interest = self.get_mask()
         return img
 
     def save(self, img, name):
@@ -155,7 +157,7 @@ class ProcessPipeline:
                 ):
         img = self.load(img)
         self.message = ""  # clean message
-        self.tracking_message = "temp"
+        self.tracking_message = ""
 
         if plot_steps:
             f, self.plot_axes = plt.subplots(len(plot_steps))
@@ -275,31 +277,66 @@ class ProcessPipeline:
             plt.show()
         return out
 
-    def detect_and_heat(self, src, out):
-        if self.rolling_heat is None:
-            self.rolling_heat = np.ones_like(self.gray, dtype=np.float)
+    def area_of_interest(self):
+        height, width = self.img.shape[:2]
+        # return a trapezoind on bottom image to around the center of image
 
-        self.rolling_heat = np.clip(self.rolling_heat, 1, 255)
-        self.rolling_heat -= 1  # cool down the previous heat
+        # [(0, 540), (384.0, 270.0), (576.0, 270.0), (960, 540)]
+        vertices = [(0, height),
+                    (0, height * 0.6),
+                    (int(width * 0.35), height * 0.55),
+                    (int(width * 0.65), height * 0.55),
+                    (width, height * 0.6),
+                    (width, height)]
+        return np.array([vertices],
+                        dtype=np.int32)
+
+    def get_mask(self):
+        # defining a blank mask to start with
+        mask = np.zeros(self.img.shape[:2], dtype=np.float)
+        vertices = self.area_of_interest()
+        cv2.fillPoly(mask, vertices, 1)
+        return mask
+
+    def detect_and_heat(self, src, out):
+        SINGLE_FRAME_THRESHOLD = 1
+        ROLLING_HEAT_THRESHOLD = 5
+        MAXIMUM_HEAT = 15
+        HEAT_GENERATION_DECAY = 1
+
+        if self.rolling_heat is None:
+            self.rolling_heat = np.zeros_like(self.gray, dtype=np.float)
+        else:
+            self.rolling_heat -= HEAT_GENERATION_DECAY  # cool down the previous heat
+            self.rolling_heat = np.clip(self.rolling_heat, 0, MAXIMUM_HEAT)
 
         bboxes = find_car_boxes(src, **self.detection_params)
 
-        heatmap = get_heatmap(self.undist, bboxes, threshold=0)
+        heatmap = get_heatmap(self.undist, bboxes, threshold=SINGLE_FRAME_THRESHOLD)
+        # heatmap *= self.mask_of_interest
         self.rolling_heat += heatmap  # add the current heatmap
 
         thresholded_rolling_heat = self.rolling_heat.copy()
-        ROLLING_HEAT_THRESHOLD = 4
+
         thresholded_rolling_heat[thresholded_rolling_heat < ROLLING_HEAT_THRESHOLD] = 0
 
         # threshold over the global heat
         labeled_array, num_features = label(thresholded_rolling_heat)
-        out_heat = np.dstack(
-            (self.rolling_heat * 200, self.rolling_heat, self.rolling_heat)
-        ).astype(np.uint8)
-        out = cv2.addWeighted(out, 1, out_heat, .2, 0)
+        # out_heat = np.dstack(
+        #     (self.rolling_heat * 200, self.rolling_heat, self.rolling_heat)
+        # ).astype(np.uint8)
+
+        # mask = np.dstack(
+        #     (self.mask_of_interest, self.mask_of_interest, self.mask_of_interest * 255)
+        # ).astype(np.uint8)
+
+        # some additional optional overlay - the heatmap and the mask
+        # out = cv2.addWeighted(out, 1, mask, .1, 0)
+        # out = cv2.addWeighted(out, 1, out_heat, .4, 0)
+
         out = draw_labeled_bboxes(out, labeled_array, num_features)
         signal('track_message').send(
-            'cars: {tot_cars} - heat {minheat}-{maxheat}'.format(
+            'cars: {tot_cars}'.format(
                 tot_cars=num_features,
                 minheat=self.rolling_heat.min(),
                 maxheat=self.rolling_heat.max()
@@ -353,7 +390,7 @@ def run_sequence():
     image_sequence = sorted(glob.glob("img/sequence/*.jpg"))
     pipeline = ProcessPipeline()
     pipeline.output_prefix = "sequence"
-    for filename in image_sequence[:3]:
+    for filename in image_sequence:
         # run_single(filename)
         img = mpimg.imread(filename)
         print(filename)
@@ -383,8 +420,8 @@ if __name__ == '__main__':
     # run_single('img/sequence/frame_0.jpg')
 
     # examples on project video
-    run_video('video/test_video.mp4')
-    # run_video('video/project_video.mp4')
+    # run_video('video/test_video.mp4')
+    run_video('video/project_video.mp4')
     # run_video('video/challenge_video.mp4')
 
     # run_sequence()

@@ -15,11 +15,12 @@ def extract_features(imgs, color_space='RGB',
                      spatial_size=(32, 32),
                      hist_bins=32, hist_range=None,
                      orient=9, pix_per_cell=8, cell_per_block=2, hog_channel='ALL',
+                     hog=True, spatial=False, hist=False,
                      ):
     print("Extracting features:")
-    print("Spatial features (resize):", spatial_size)
-    print("Color features (hist):", hist_bins, hist_range)
-    print("HOG features:", orient, pix_per_cell, cell_per_block, hog_channel)
+    if spatial: print("Spatial features (resize):", spatial_size)
+    if hist: print("Color features (hist):", hist_bins, hist_range)
+    if hog: print("HOG features:", orient, pix_per_cell, cell_per_block, hog_channel)
     # Create a list to append feature vectors to
     features = []
     # Iterate through the list of images
@@ -32,45 +33,46 @@ def extract_features(imgs, color_space='RGB',
                 function_name = "COLOR_" + starting_color_space + "2" + color_space
                 img = cv2.cvtColor(img, getattr(cv2, function_name))
 
+            feature_parts = []
             # Apply bin_spatial() to get spatial color features
-            spatial_features = bin_spatial(img, size=spatial_size)
+            if spatial:
+                spatial_features = bin_spatial(img, size=spatial_size)
+                feature_parts.append(spatial_features)
             # Apply color_hist() to get color histogram features
-            hist_features = color_hist(img, nbins=hist_bins, bins_range=hist_range)
+            if hist:
+                hist_features = color_hist(img, nbins=hist_bins, bins_range=hist_range)
+                feature_parts.append(hist_features)
 
             # Call get_hog_features() with vis=False, feature_vec=True
-            if hog_channel == 'ALL':
-                hog_features = []
-                for channel in range(img.shape[2]):
-                    hog_features.append(
-                        get_hog_features(
-                            img[:, :, channel],
-                            orient, pix_per_cell, cell_per_block,
-                            vis=False, feature_vec=True)
+            if hog:
+                if hog_channel == 'ALL':
+                    hog_features = []
+                    for channel in range(img.shape[2]):
+                        hog_features.append(
+                            get_hog_features(
+                                img[:, :, channel],
+                                orient, pix_per_cell, cell_per_block,
+                                vis=False, feature_vec=True)
+                        )
+                    hog_features = np.ravel(hog_features)
+                else:
+                    hog_features = get_hog_features(
+                        img[:, :, hog_channel], orient,
+                        pix_per_cell, cell_per_block, vis=False,
+                        feature_vec=True
                     )
-                hog_features = np.ravel(hog_features)
-            else:
-                hog_features = get_hog_features(
-                    img[:, :, hog_channel], orient,
-                    pix_per_cell, cell_per_block, vis=False,
-                    feature_vec=True
-                )
+                feature_parts.append(hog_features)
 
             # Append the new feature vector to the features list
 
             features.append(
-                np.concatenate(
-                    (
-                        spatial_features,
-                        hist_features,
-                        hog_features,
-                    )
-                )
+                np.concatenate(feature_parts)
             )
         print("Feature size {tot} - Spatial: {spatial} - Hist: {hist} - Hog: {hog}".format(
             tot=len(features[0]),
-            spatial=len(spatial_features),
-            hist=len(hist_features),
-            hog=len(hog_features),
+            spatial=len(spatial_features) if spatial else '-',
+            hist=len(hist_features) if hist else '-',
+            hog=len(hog_features) if hog else '-',
         ))
         print()
     # Return list of feature vectors
@@ -82,7 +84,9 @@ def find_car_boxes(img, ystart, ystop, scale,
                    color_space,
                    orient, pix_per_cell, cell_per_block,
                    hog_channel,
-                   spatial_size, hist_bins
+                   spatial_size, hist_bins,
+
+                   hog=True, spatial=False, hist=False
                    ):
     bboxes = []
     if img.dtype == np.uint8:
@@ -95,10 +99,13 @@ def find_car_boxes(img, ystart, ystop, scale,
         ctrans_tosearch = cv2.resize(ctrans_tosearch,
                                      (np.int(imshape[1] / scale), np.int(imshape[0] / scale)))
 
-    if hog_channel == 'ALL':
-        hog_channels = [0, 1, 2]
+    if hog:
+        if hog_channel == 'ALL':
+            hog_channels = [0, 1, 2]
+        else:
+            hog_channels = [hog_channel]
     else:
-        hog_channels = [hog_channel]
+        hog_channels = []
 
     # Define blocks and steps as above
     nxblocks = (ctrans_tosearch.shape[1] // pix_per_cell) - (cell_per_block - 1)
@@ -116,20 +123,13 @@ def find_car_boxes(img, ystart, ystop, scale,
         ch = ctrans_tosearch[:, :, chan_number]
 
         # Compute individual channel HOG features for the entire image
-        hog = get_hog_features(ch, orient, pix_per_cell, cell_per_block, feature_vec=False)
-        hogs.append(hog)
+        channel_hog = get_hog_features(ch, orient, pix_per_cell, cell_per_block, feature_vec=False)
+        hogs.append(channel_hog)
 
     for xb in range(nxsteps):
         for yb in range(nysteps):
             ypos = yb * cells_per_step
             xpos = xb * cells_per_step
-            # Extract HOG for this patch
-            hog_feats = []
-            for hog in hogs:
-                hog_feats.append(
-                    hog[ypos:ypos + nblocks_per_window, xpos:xpos + nblocks_per_window].ravel()
-                )
-            hog_features = np.hstack(hog_feats)
 
             xleft = xpos * pix_per_cell
             ytop = ypos * pix_per_cell
@@ -137,13 +137,31 @@ def find_car_boxes(img, ystart, ystop, scale,
             # Extract the image patch
             subimg = cv2.resize(ctrans_tosearch[ytop:ytop + window, xleft:xleft + window], (64, 64))
 
+
+            chosen_features = []
+
             # Get color features
-            spatial_features = bin_spatial(subimg, size=spatial_size)
-            hist_features = color_hist(subimg, nbins=hist_bins, bins_range=None)
+            if spatial:
+                spatial_features = bin_spatial(subimg, size=spatial_size)
+                chosen_features.append(spatial_features)
+            if hist:
+                hist_features = color_hist(subimg, nbins=hist_bins, bins_range=None)
+                chosen_features.append(hist_features)
+
+            # Extract HOG for this patch
+            if hog:
+                hog_feats = []
+                for channel_hog in hogs:
+                    hog_feats.append(
+                        channel_hog[ypos:ypos + nblocks_per_window, xpos:xpos + nblocks_per_window]
+                            .ravel()
+                    )
+                hog_features = np.hstack(hog_feats)
+                chosen_features.append(hog_features)
 
             # Scale features and make a prediction
             test_features = X_scaler.transform(
-                np.hstack((spatial_features, hist_features, hog_features)).reshape(1, -1)
+                np.hstack(chosen_features).reshape(1, -1)
             )
             # test_features = X_scaler.transform(np.hstack((shape_feat, hist_feat)).reshape(1, -1))
             test_prediction = svc.predict(test_features)
