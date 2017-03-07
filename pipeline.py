@@ -76,6 +76,7 @@ class ProcessPipeline:
             **self.classificator
         )
         self.rolling_heat = None
+        self.overlay_heat = False # True to display the heat overlay
         self.mask_of_interest = None
 
     def message_subscribe(self):
@@ -322,9 +323,6 @@ class ProcessPipeline:
 
         # threshold over the global heat
         labeled_array, num_features = label(thresholded_rolling_heat)
-        # out_heat = np.dstack(
-        #     (self.rolling_heat * 200, self.rolling_heat, self.rolling_heat)
-        # ).astype(np.uint8)
 
         # mask = np.dstack(
         #     (self.mask_of_interest, self.mask_of_interest, self.mask_of_interest * 255)
@@ -332,14 +330,21 @@ class ProcessPipeline:
 
         # some additional optional overlay - the heatmap and the mask
         # out = cv2.addWeighted(out, 1, mask, .1, 0)
-        # out = cv2.addWeighted(out, 1, out_heat, .4, 0)
+
+        # HEAT overlay
+        if self.overlay_heat:
+            out_heat = np.dstack(
+                (self.rolling_heat * 200, self.rolling_heat, self.rolling_heat)
+            ).astype(np.uint8)
+            out = cv2.addWeighted(out, 1, out_heat, .4, 0)
+        # ***
 
         out = draw_labeled_bboxes(out, labeled_array, num_features)
         signal('track_message').send(
             'cars: {tot_cars}'.format(
                 tot_cars=num_features,
-                minheat=self.rolling_heat.min(),
-                maxheat=self.rolling_heat.max()
+                # minheat=self.rolling_heat.min(),
+                # maxheat=self.rolling_heat.max()
             )
         )
 
@@ -414,14 +419,15 @@ if __name__ == '__main__':
     # extract_sequence()
 
     # examples on single frames (it will do a "blind scan")
+    # run_single('img/001240.png')
     # run_single('img/test6.jpg')
     # run_single('img/test5.jpg')
     # ... and an hard one
     # run_single('img/sequence/frame_0.jpg')
 
     # examples on project video
-    # run_video('video/test_video.mp4')
-    run_video('video/project_video.mp4')
+    run_video('video/test_video.mp4')
+    # run_video('video/project_video.mp4')
     # run_video('video/challenge_video.mp4')
 
     # run_sequence()

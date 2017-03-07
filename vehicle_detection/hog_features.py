@@ -61,14 +61,13 @@ if __name__ == '__main__':
     # Just for fun choose random car / not-car indices and plot example images
     car_ind = np.random.randint(0, data_info['n_cars'])
     notcar_ind = np.random.randint(0, data_info['n_cars'])
-    car_ind = 4057
     print(car_ind)
 
     # Read in car / not-car images
     car_image = mpimg.imread(data_info['cars'][car_ind])
     notcar_image = mpimg.imread(data_info['notcars'][notcar_ind])
 
-    if False:
+    if True:
         # Plot the examples
         fig = plt.figure()
         plt.subplot(121)
@@ -77,19 +76,20 @@ if __name__ == '__main__':
         plt.subplot(122)
         plt.imshow(notcar_image)
         plt.title('Example Not-car Image')
+        plt.savefig('output_images/car_noncar.png')
+        fig.tight_layout()
         plt.show()
 
     gray = cv2.cvtColor(car_image, cv2.COLOR_RGB2GRAY)
     f, h = get_hog_features(gray,
                             orient=9, pix_per_cell=8, cell_per_block=2, vis=True)
     fig = plt.figure(figsize=(30, 20))
-    plt.subplot(131)
+    plt.subplot(121)
     plt.imshow(car_image)
     plt.title('Original')
-    plt.subplot(132)
-    plt.imshow(gray, 'gray')
-    plt.title('Gray')
-    plt.subplot(133)
+    plt.subplot(122)
     plt.imshow(h)
     plt.title('HOG')
+    fig.tight_layout()
+    plt.savefig('output_images/hog_%s.png' % notcar_ind)
     plt.show()

@@ -90,9 +90,20 @@ if __name__ == '__main__':
     # You can also read cutout2, 3, 4 etc. to see other examples
     image = mpimg.imread('img/cutout3.jpg')
 
-    feature_vec = bin_spatial(image, color_space='RGB', size=(32, 32))
-
     # Plot features
-    plt.plot(feature_vec)
+    fig = plt.figure()
+
+    plt.subplot(131)
+    plt.imshow(image)
+
+    plt.subplot(132)
+    plt.plot(bin_spatial(image, size=(32, 32)))
     plt.title('Spatially Binned Features')
+
+    plt.subplot(133)
+    plt.plot(color_hist(image))
+    plt.title('Color hist')
+
+    fig.tight_layout()
+    plt.savefig("output_images/spatial_col_features.png")
     plt.show()

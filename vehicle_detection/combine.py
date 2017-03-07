@@ -2,6 +2,8 @@ import cv2
 import matplotlib.image as mpimg
 import matplotlib.pyplot as plt
 import numpy as np
+from tqdm import tqdm
+import hashlib
 from .color_features import bin_spatial, color_hist, convert_color
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
@@ -25,49 +27,53 @@ def extract_features(imgs, color_space='RGB',
     features = []
     # Iterate through the list of images
     if len(imgs):
-        for imgfile in imgs:
-            # Read in each one by one
-            img = mpimg.imread(imgfile)
-            # apply color conversion if other than 'RGB'
-            if color_space and color_space != starting_color_space:
-                function_name = "COLOR_" + starting_color_space + "2" + color_space
-                img = cv2.cvtColor(img, getattr(cv2, function_name))
+        with tqdm(total=len(imgs)) as pbar:
+            for imgfile in imgs:
+                # Read in each one by one
+                img = mpimg.imread(imgfile)
+                if img.dtype == np.uint8:
+                    img = img.astype(np.float32) / 255
+                # apply color conversion if other than 'RGB'
+                if color_space and color_space != starting_color_space:
+                    function_name = "COLOR_" + starting_color_space + "2" + color_space
+                    img = cv2.cvtColor(img, getattr(cv2, function_name))
 
-            feature_parts = []
-            # Apply bin_spatial() to get spatial color features
-            if spatial:
-                spatial_features = bin_spatial(img, size=spatial_size)
-                feature_parts.append(spatial_features)
-            # Apply color_hist() to get color histogram features
-            if hist:
-                hist_features = color_hist(img, nbins=hist_bins, bins_range=hist_range)
-                feature_parts.append(hist_features)
+                feature_parts = []
+                # Apply bin_spatial() to get spatial color features
+                if spatial:
+                    spatial_features = bin_spatial(img, size=spatial_size)
+                    feature_parts.append(spatial_features)
+                # Apply color_hist() to get color histogram features
+                if hist:
+                    hist_features = color_hist(img, nbins=hist_bins, bins_range=hist_range)
+                    feature_parts.append(hist_features)
 
-            # Call get_hog_features() with vis=False, feature_vec=True
-            if hog:
-                if hog_channel == 'ALL':
-                    hog_features = []
-                    for channel in range(img.shape[2]):
-                        hog_features.append(
-                            get_hog_features(
-                                img[:, :, channel],
-                                orient, pix_per_cell, cell_per_block,
-                                vis=False, feature_vec=True)
+                # Call get_hog_features() with vis=False, feature_vec=True
+                if hog:
+                    if hog_channel == 'ALL':
+                        hog_features = []
+                        for channel in range(img.shape[2]):
+                            hog_features.append(
+                                get_hog_features(
+                                    img[:, :, channel],
+                                    orient, pix_per_cell, cell_per_block,
+                                    vis=False, feature_vec=True)
+                            )
+                        hog_features = np.ravel(hog_features)
+                    else:
+                        hog_features = get_hog_features(
+                            img[:, :, hog_channel], orient,
+                            pix_per_cell, cell_per_block, vis=False,
+                            feature_vec=True
                         )
-                    hog_features = np.ravel(hog_features)
-                else:
-                    hog_features = get_hog_features(
-                        img[:, :, hog_channel], orient,
-                        pix_per_cell, cell_per_block, vis=False,
-                        feature_vec=True
-                    )
-                feature_parts.append(hog_features)
+                    feature_parts.append(hog_features)
 
-            # Append the new feature vector to the features list
+                # Append the new feature vector to the features list
 
-            features.append(
-                np.concatenate(feature_parts)
-            )
+                features.append(
+                    np.concatenate(feature_parts)
+                )
+                pbar.update()
         print("Feature size {tot} - Spatial: {spatial} - Hist: {hist} - Hog: {hog}".format(
             tot=len(features[0]),
             spatial=len(spatial_features) if spatial else '-',
@@ -86,12 +92,13 @@ def find_car_boxes(img, ystart, ystop, scale,
                    hog_channel,
                    spatial_size, hist_bins,
 
-                   hog=True, spatial=False, hist=False
+                   hog=True, spatial=False, hist=False,
+                   save_positive=False,
                    ):
     bboxes = []
     if img.dtype == np.uint8:
         img = img.astype(np.float32) / 255
-
+    center_horiz = img.shape[1] // 2
     img_tosearch = img[ystart:ystop, :, :]
     ctrans_tosearch = convert_color(img_tosearch, color_space=color_space)
     if scale != 1:
@@ -137,7 +144,6 @@ def find_car_boxes(img, ystart, ystop, scale,
             # Extract the image patch
             subimg = cv2.resize(ctrans_tosearch[ytop:ytop + window, xleft:xleft + window], (64, 64))
 
-
             chosen_features = []
 
             # Get color features
@@ -170,6 +176,15 @@ def find_car_boxes(img, ystart, ystop, scale,
                 xbox_left = np.int(xleft * scale)
                 ytop_draw = np.int(ytop * scale)
                 win_draw = np.int(window * scale)
+
+                if save_positive and xbox_left <= center_horiz:
+                    # save as false positive the detection on the left half
+                    hashable = subimg.view(np.uint8)
+                    hash = hashlib.md5(hashable).hexdigest()
+                    mpimg.imsave(
+                        'img/detected_vehicles/false_positive/%s.png' % hash,
+                        subimg
+                    )
                 bboxes.append(
                     ((xbox_left, ytop_draw + ystart),
                      (xbox_left + win_draw, ytop_draw + win_draw + ystart))
